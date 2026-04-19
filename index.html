@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Industrial Load Priority Manager</title>
+<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117;
+  --bg2: #1a1d27;
+  --bg3: #22263a;
+  --border: #2e3450;
+  --text: #e8eaf0;
+  --muted: #7a8099;
+  --sec1: #ef4444;
+  --sec2: #f97316;
+  --sec3: #eab308;
+  --sec4: #3b82f6;
+  --on: #22c55e;
+  --off: #374151;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body { 
+  background: var(--bg); 
+  color: var(--text); 
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+  min-height: 100vh; 
+}
+
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.logo { 
+  font-size: 18px; 
+  font-weight: 700; 
+  letter-spacing: 1px; 
+  color: var(--text); 
+}
+
+.logo span { color: #60a5fa; }
+
+.status-bar { 
+  display: flex; 
+  align-items: center; 
+  gap: 16px; 
+  font-size: 13px; 
+}
+
+.mqtt-dot { 
+  width: 10px; 
+  height: 10px; 
+  border-radius: 50%; 
+  background: #ef4444; 
+  display: inline-block; 
+  margin-right: 6px; 
+  transition: background .3s; 
+}
+
+.mqtt-dot.connected { background: var(--on); }
+
+.mqtt-info { color: var(--muted); }
+
+.main { 
+  max-width: 1200px; 
+  margin: 0 auto; 
+  padding: 24px 16px; 
+}
+
+.power-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.power-card h2 { 
+  font-size: 14px; 
+  color: var(--muted); 
+  text-transform: uppercase; 
+  letter-spacing: 1px; 
+  margin-bottom: 16px; 
+}
+
+.power-grid { 
+  display: grid; 
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); 
+  gap: 12px; 
+}
+
+.pwr-btn {
+  background: var(--bg3);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 10px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  color: var(--text);
+  position: relative;
+}
+
+.pwr-btn:hover { 
+  border-color: #60a5fa; 
+  background: #1e2a40; 
+}
+
+.pwr-btn.active { 
+  border-color: var(--on); 
+  background: #0d2018; 
+}
+
+.pwr-btn.active::after { 
+  content: '✓'; 
+  position: absolute; 
+  top: 6px; 
+  right: 8px; 
+  color: var(--on); 
+  font-size: 12px;
+  font-weight: 700; 
+}
+
+.pwr-icon { font-size: 28px; margin-bottom: 6px; }
+.pwr-name { font-size: 13px; font-weight: 600; }
+.pwr-kw { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.pwr-cap { font-size: 10px; color: var(--on); margin-top: 4px; font-weight: 600; }
+
+.priority-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.pri-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pri-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+.sections-grid { 
+  display: grid; 
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); 
+  gap: 16px; 
+  margin-bottom: 24px; 
+}
+
+.sec-card {
+  background: var(--bg2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: opacity .3s;
+}
+
+.sec-card.disabled { opacity: 0.4; pointer-events: none; }
+
+.sec-header {
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.sec-title { 
+  font-size: 13px; 
+  font-weight: 700; 
+  text-transform: uppercase; 
+  letter-spacing: .5px; 
+}
+
+.sec-badge { 
+  font-size: 10px; 
+  padding: 3px 8px; 
+  border-radius: 20px; 
+  font-weight: 600; 
+}
+
+.sec1 .sec-header { background: rgba(239,68,68,.12); border-bottom-color: rgba(239,68,68,.3); }
+.sec1 .sec-title { color: var(--sec1); }
+.sec1 .sec-badge { background: rgba(239,68,68,.2); color: var(--sec1); }
+
+.sec2 .sec-header { background: rgba(249,115,22,.12); border-bottom-color: rgba(249,115,22,.3); }
+.sec2 .sec-title { color: var(--sec2); }
+.sec2 .sec-badge { background: rgba(249,115,22,.2); color: var(--sec2); }
+
+.sec3 .sec-header { background: rgba(234,179,8,.12); border-bottom-color: rgba(234,179,8,.3); }
+.sec3 .sec-title { color: var(--sec3); }
+.sec3 .sec-badge { background: rgba(234,179,8,.2); color: var(--sec3); }
+
+.sec4 .sec-header { background: rgba(59,130,246,.12); border-bottom-color: rgba(59,130,246,.3); }
+.sec4 .sec-title { color: var(--sec4); }
+.sec4 .sec-badge { background: rgba(59,130,246,.2); color: var(--sec4); }
+
+.sec-body { padding: 14px 16px; }
+
+.sensor-row { 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  margin-bottom: 10px; 
+  padding: 8px 10px; 
+  background: var(--bg3); 
+  border-radius: 7px; 
+  font-size: 13px; 
+}
+
+.sensor-label { color: var(--muted); }
+.sensor-val { font-weight: 600; }
+.sensor-val.alert { color: var(--sec1); }
+.sensor-val.ok { color: var(--on); }
+.sensor-val.warn { color: var(--sec2); }
+
+.relay-list { display: flex; flex-direction: column; gap: 8px; }
+
+.relay-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg3);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  transition: border-color .2s;
+}
+
+.relay-row.on { border-color: rgba(34,197,94,.4); }
+
+.relay-info { display: flex; flex-direction: column; }
+.relay-name { font-size: 13px; font-weight: 500; }
+.relay-pin { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+.toggle { position: relative; display: inline-block; width: 42px; height: 24px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+
+.slider {
+  position: absolute; 
+  inset: 0;
+  background: var(--off);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: .2s;
+}
+
+.slider:before {
+  content: '';
+  position: absolute;
+  width: 18px; 
+  height: 18px;
+  left: 3px; 
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: .2s;
+}
+
+input:checked + .slider { background: var(--on); }
+input:checked + .slider:before { transform: translateX(18px); }
+
+.status-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: 8px;
+}
+
+.status-panel h3 { 
+  font-size: 12px; 
+  color: var(--muted); 
+  text-transform: uppercase; 
+  letter-spacing: 1px; 
+  margin-bottom: 12px; 
+}
+
+.log-area { 
+  max-height: 130px; 
+  overflow-y: auto; 
+  font-size: 11px; 
+  font-family: 'Courier New', monospace; 
+  color: var(--muted); 
+  line-height: 1.7; 
+}
+
+.log-area .log-ok { color: var(--on); }
+.log-area .log-err { color: var(--sec1); }
+.log-area .log-info { color: #60a5fa; }
+.log-area .log-warn { color: var(--sec2); }
+
+.cap-bar-wrap { margin-top: 12px; }
+
+.cap-label { 
+  font-size: 11px; 
+  color: var(--muted); 
+  display: flex; 
+  justify-content: space-between; 
+  margin-bottom: 4px; 
+}
+
+.cap-bar { 
+  height: 6px; 
+  background: var(--bg3); 
+  border-radius: 3px; 
+  overflow: hidden; 
+}
+
+.cap-fill { 
+  height: 100%; 
+  border-radius: 3px; 
+  background: var(--on); 
+  transition: width .5s, background .3s; 
+}
+
+@media (max-width: 600px) {
+  .power-grid { grid-template-columns: repeat(2, 1fr); }
+  .sections-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">INDUS<span>CTRL</span> — Priority Load Manager</div>
+  <div class="status-bar">
+    <span><span class="mqtt-dot" id="mqttDot"></span><span id="mqttStatus">Connecting…</span></span>
+    <span class="mqtt-info" id="powerLabel">Source: —</span>
+    <span class="mqtt-info" id="clockEl"></span>
+  </div>
+</header>
+
+<div class="main">
+  
+  <div class="power-card">
+    <h2>Power Source Selection</h2>
+    <div class="power-grid">
+      <div class="pwr-btn" onclick="selectPower('EB')" id="pwr-EB">
+        <div class="pwr-icon">⚡</div>
+        <div class="pwr-name">EB Supply</div>
+        <div class="pwr-kw">Grid Power</div>
+        <div class="pwr-cap">SEC 1 + 2 + 3 + 4</div>
+      </div>
+      <div class="pwr-btn" onclick="selectPower('GEN1')" id="pwr-GEN1">
+        <div class="pwr-icon">🔋</div>
+        <div class="pwr-name">Generator 1</div>
+        <div class="pwr-kw">100 kW</div>
+        <div class="pwr-cap">SEC 1 only</div>
+      </div>
+      <div class="pwr-btn" onclick="selectPower('GEN2')" id="pwr-GEN2">
+        <div class="pwr-icon">⚙️</div>
+        <div class="pwr-name">Generator 2</div>
+        <div class="pwr-kw">500 kW</div>
+        <div class="pwr-cap">SEC 1 + 2</div>
+      </div>
+      <div class="pwr-btn" onclick="selectPower('GEN3')" id="pwr-GEN3">
+        <div class="pwr-icon">🔌</div>
+        <div class="pwr-name">Generator 3</div>
+        <div class="pwr-kw">800 kW</div>
+        <div class="pwr-cap">SEC 1 + 2 + 3</div>
+      </div>
+    </div>
+    <div class="cap-bar-wrap">
+      <div class="cap-label">
+        <span>Active Sections</span>
+        <span id="capText">—</span>
+      </div>
+      <div class="cap-bar"><div class="cap-fill" id="capFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="priority-legend">
+    <div class="pri-badge"><div class="pri-dot" style="background:var(--sec1)"></div>SEC 1 — Safety (MUST)</div>
+    <div class="pri-badge"><div class="pri-dot" style="background:var(--sec2)"></div>SEC 2 — Critical (MUST)</div>
+    <div class="pri-badge"><div class="pri-dot" style="background:var(--sec3)"></div>SEC 3 — CNC/Pack (Optional)</div>
+    <div class="pri-badge"><div class="pri-dot" style="background:var(--sec4)"></div>SEC 4 — Other (Low)</div>
+  </div>
+
+  <div class="sections-grid">
+    
+    <!-- SEC 1: Safety -->
+    <div class="sec-card sec1" id="card-sec1">
+      <div class="sec-header">
+        <span class="sec-title">Section 1 — Safety</span>
+        <span class="sec-badge">ESP32 #1</span>
+      </div>
+      <div class="sec-body">
+        <div class="sensor-row">
+          <span class="sensor-label">🌡️ Temperature</span>
+          <span class="sensor-val" id="tempVal">--°C</span>
+        </div>
+        <div class="sensor-row">
+          <span class="sensor-label">📳 Vibration (D4)</span>
+          <span class="sensor-val" id="vibVal">--</span>
+        </div>
+        <div class="sensor-row">
+          <span class="sensor-label">⚠️ Fluctuation</span>
+          <span class="sensor-val" id="fluctVal">--</span>
+        </div>
+        <div class="sensor-row">
+          <span class="sensor-label">🚪 DS1 Door Sensor</span>
+          <span class="sensor-val" id="ds1Val">--</span>
+        </div>
+        <div class="relay-list" style="margin-top:10px">
+          <div class="relay-row" id="r1-18-row">
+            <div class="relay-info">
+              <span class="relay-name">Safety Relay 1</span>
+              <span class="relay-pin">PIN 18 — Active LOW</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r1-18" onchange="sendRelay('esp1','relay18',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="relay-row" id="r1-19-row">
+            <div class="relay-info">
+              <span class="relay-name">Safety Relay 2</span>
+              <span class="relay-pin">PIN 19 — Active LOW</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r1-19" onchange="sendRelay('esp1','relay19',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEC 2: Critical -->
+    <div class="sec-card sec2" id="card-sec2">
+      <div class="sec-header">
+        <span class="sec-title">Section 2 — Critical</span>
+        <span class="sec-badge">ESP32 #2</span>
+      </div>
+      <div class="sec-body">
+        <div class="sensor-row">
+          <span class="sensor-label">🖥️ Machine Status</span>
+          <span class="sensor-val" id="critStatus">--</span>
+        </div>
+        <div class="sensor-row">
+          <span class="sensor-label">⏱️ Uptime</span>
+          <span class="sensor-val" id="critUptime">--</span>
+        </div>
+        <div class="relay-list" style="margin-top:10px">
+          <div class="relay-row" id="r2-16-row">
+            <div class="relay-info">
+              <span class="relay-name">Critical Machine 1</span>
+              <span class="relay-pin">PIN 16 — Active LOW (24/7)</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r2-16" onchange="sendRelay('esp2','relay16',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="relay-row" id="r2-17-row">
+            <div class="relay-info">
+              <span class="relay-name">Critical Machine 2</span>
+              <span class="relay-pin">PIN 17 — Active LOW (24/7)</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r2-17" onchange="sendRelay('esp2','relay17',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEC 3: CNC/Packing -->
+    <div class="sec-card sec3" id="card-sec3">
+      <div class="sec-header">
+        <span class="sec-title">Section 3 — CNC / Packing</span>
+        <span class="sec-badge">ESP32 #3</span>
+      </div>
+      <div class="sec-body">
+        <div class="sensor-row">
+          <span class="sensor-label">⚙️ Machine Status</span>
+          <span class="sensor-val" id="cncStatus">--</span>
+        </div>
+        <div class="sensor-row">
+          <span class="sensor-label">📦 Pack Line</span>
+          <span class="sensor-val" id="packStatus">--</span>
+        </div>
+        <div class="relay-list" style="margin-top:10px">
+          <div class="relay-row" id="r3-16-row">
+            <div class="relay-info">
+              <span class="relay-name">CNC Machine</span>
+              <span class="relay-pin">PIN 16 — Active LOW</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r3-16" onchange="sendRelay('esp3','relay16',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="relay-row" id="r3-17-row">
+            <div class="relay-info">
+              <span class="relay-name">Packing Machine</span>
+              <span class="relay-pin">PIN 17 — Active LOW</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r3-17" onchange="sendRelay('esp3','relay17',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEC 4: Appliances -->
+    <div class="sec-card sec4" id="card-sec4">
+      <div class="sec-header">
+        <span class="sec-title">Section 4 — Appliances</span>
+        <span class="sec-badge">ESP32 #1</span>
+      </div>
+      <div class="sec-body">
+        <div class="sensor-row">
+          <span class="sensor-label">💡 Load Status</span>
+          <span class="sensor-val" id="appStatus">--</span>
+        </div>
+        <div class="relay-list" style="margin-top:10px">
+          <div class="relay-row" id="r4-18-row">
+            <div class="relay-info">
+              <span class="relay-name">Appliance 1</span>
+              <span class="relay-pin">PIN 18 (shared ESP1) — Low Priority</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r4-18" onchange="sendRelay('esp1','app18',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="relay-row" id="r4-19-row">
+            <div class="relay-info">
+              <span class="relay-name">Appliance 2</span>
+              <span class="relay-pin">PIN 19 (shared ESP1) — Low Priority</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="r4-19" onchange="sendRelay('esp1','app19',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="status-panel">
+    <h3>System Event Log</h3>
+    <div class="log-area" id="logArea">
+      <div class="log-info">[--:--:--] System initialising…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// MQTT CONFIG
+// ═══════════════════════════════════════════════════════════════════════════
+const MQTT_HOST = 'wss://r6166b11.ala.us-east-1.emqxsl.com:8084/mqtt';
+const MQTT_USER = 'industry';
+const MQTT_PASS = 'industry';
+const MQTT_CID = 'industry-web-' + Math.random().toString(16).slice(2,8);
+const TOPIC_ROOT = 'industry/';
+
+let client = null;
+let currentPower = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PRIORITY MAP
+// ═══════════════════════════════════════════════════════════════════════════
+const POWER_SECTIONS = {
+  EB: [1,2,3,4],
+  GEN1: [1],
+  GEN2: [1,2],
+  GEN3: [1,2,3]
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════════════════════════════════
+function updateClock(){
+  document.getElementById('clockEl').textContent = new Date().toLocaleTimeString();
+}
+setInterval(updateClock,1000); 
+updateClock();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOG
+// ═══════════════════════════════════════════════════════════════════════════
+function addLog(msg, cls=''){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('logArea');
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = `[${t}] ${msg}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  if(el.children.length > 80) el.removeChild(el.firstChild);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MQTT CONNECT
+// ═══════════════════════════════════════════════════════════════════════════
+function initMQTT(){
+  addLog('Connecting to MQTT broker…','log-info');
+  
+  client = mqtt.connect(MQTT_HOST, {
+    username: MQTT_USER,
+    password: MQTT_PASS,
+    clientId: MQTT_CID,
+    clean: true,
+    reconnectPeriod: 3000
+  });
+
+  client.on('connect', ()=>{
+    document.getElementById('mqttDot').classList.add('connected');
+    document.getElementById('mqttStatus').textContent = 'Connected';
+    addLog('MQTT connected — subscribing to industry/#','log-ok');
+    client.subscribe('industry/#', {qos:1});
+  });
+
+  client.on('error', e=>{
+    addLog('MQTT error: '+e.message,'log-err');
+  });
+
+  client.on('offline', ()=>{
+    document.getElementById('mqttDot').classList.remove('connected');
+    document.getElementById('mqttStatus').textContent = 'Offline';
+    addLog('MQTT connection lost','log-err');
+  });
+
+  client.on('message', (topic, payload)=>{
+    handleMessage(topic, payload.toString());
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGE HANDLER
+// ═══════════════════════════════════════════════════════════════════════════
+function handleMessage(topic, msg){
+  addLog(`← ${topic}: ${msg}`);
+  
+  // ESP1 sensors
+  if(topic === 'industry/esp1/temperature') { 
+    const v=parseFloat(msg); 
+    setSensorVal('tempVal', v+'°C', v>50?'alert':v>40?'warn':'ok'); 
+  }
+  if(topic === 'industry/esp1/vibration') { 
+    setSensorVal('vibVal', msg, msg==='ALERT'?'alert':'ok'); 
+  }
+  if(topic === 'industry/esp1/fluctuation') { 
+    setSensorVal('fluctVal', msg, msg==='HIGH'?'warn':'ok'); 
+  }
+  if(topic === 'industry/esp1/ds1') { 
+    setSensorVal('ds1Val', msg, msg==='OPEN'?'alert':'ok'); 
+  }
+  
+  // ESP2
+  if(topic === 'industry/esp2/status') 
+    setSensorVal('critStatus', msg, msg==='RUNNING'?'ok':'warn');
+  if(topic === 'industry/esp2/uptime') 
+    setSensorVal('critUptime', msg, 'ok');
+  
+  // ESP3
+  if(topic === 'industry/esp3/cnc') 
+    setSensorVal('cncStatus', msg, msg==='ON'?'ok':'warn');
+  if(topic === 'industry/esp3/packing') 
+    setSensorVal('packStatus', msg, msg==='ON'?'ok':'warn');
+  
+  // Power source
+  if(topic === 'industry/power/source') { 
+    selectPower(msg, false); 
+  }
+  
+  // Relay states
+  if(topic.includes('/relay') || topic.includes('/state')){ 
+    updateRelayUI(topic, msg); 
+  }
+  
+  // App status
+  if(topic === 'industry/esp1/appliance_status') 
+    setSensorVal('appStatus', msg,'ok');
+}
+
+function setSensorVal(id, val, cls){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.textContent = val;
+  el.className = 'sensor-val ' + (cls||'');
+}
+
+function updateRelayUI(topic, msg){
+  const parts = topic.split('/');
+  const esp = parts[1]; 
+  const relay = parts[2];
+  const on = (msg === '1' || msg === 'ON' || msg === 'true');
+  
+  const idMap = {
+    'esp1relay18':'r1-18','esp1relay19':'r1-19',
+    'esp2relay16':'r2-16','esp2relay17':'r2-17',
+    'esp3relay16':'r3-16','esp3relay17':'r3-17',
+    'esp1app18':'r4-18','esp1app19':'r4-19'
+  };
+  
+  const key = esp + relay;
+  if(idMap[key]){
+    const cb = document.getElementById(idMap[key]);
+    if(cb) cb.checked = on;
+    const row = document.getElementById(idMap[key]+'-row');
+    if(row) row.classList.toggle('on', on);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RELAY SEND
+// ═══════════════════════════════════════════════════════════════════════════
+function sendRelay(esp, relay, state){
+  const topic = `industry/${esp}/${relay}/set`;
+  const payload = state ? '1' : '0';
+  
+  if(client && client.connected){
+    client.publish(topic, payload, {qos:1, retain:true});
+    addLog(`→ ${topic}: ${payload}`,'log-info');
+  } else {
+    addLog('Cannot send — MQTT not connected','log-err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POWER SOURCE
+// ═══════════════════════════════════════════════════════════════════════════
+function selectPower(source, publish=true){
+  currentPower = source;
+  document.getElementById('powerLabel').textContent = 'Source: ' + source;
+  addLog(`Power source set → ${source}`,'log-warn');
+  
+  // Highlight button
+  document.querySelectorAll('.pwr-btn').forEach(b=>b.classList.remove('active'));
+  const btn = document.getElementById('pwr-'+source);
+  if(btn) btn.classList.add('active');
+  
+  // Enable/disable sections
+  const allowed = POWER_SECTIONS[source] || [];
+  [1,2,3,4].forEach(s=>{
+    const card = document.getElementById('card-sec'+s);
+    if(card) card.classList.toggle('disabled', !allowed.includes(s));
+  });
+  
+  // Capacity bar
+  const pct = {EB:100,GEN1:25,GEN2:50,GEN3:75}[source]||0;
+  document.getElementById('capFill').style.width = pct+'%';
+  document.getElementById('capFill').style.background = 
+    pct===100?'var(--on)':pct>=75?'var(--sec3)':pct>=50?'var(--sec2)':'var(--sec1)';
+  
+  const labels = {
+    EB:'All 4 Sections Active (100%)',
+    GEN1:'SEC 1 Only — 100kW (25%)',
+    GEN2:'SEC 1+2 — 500kW (50%)',
+    GEN3:'SEC 1+2+3 — 800kW (75%)'
+  };
+  document.getElementById('capText').textContent = labels[source]||'';
+  
+  // Publish power source
+  if(publish && client && client.connected){
+    client.publish('industry/power/source', source, {qos:1, retain:true});
+    
+    // Send priority enable/disable
+    const p = {
+      'esp1': allowed.includes(1) ? '1' : '0',
+      'esp2': allowed.includes(2) ? '1' : '0',
+      'esp3': allowed.includes(3) ? '1' : '0',
+    };
+    
+    Object.entries(p).forEach(([esp,en])=>{
+      client.publish(`industry/${esp}/priority_enable`, en, {qos:1, retain:true});
+    });
+    
+    // SEC4 only when EB
+    client.publish('industry/esp1/sec4_enable', allowed.includes(4)?'1':'0', {qos:1,retain:true});
+    
+    addLog(`Priority broadcast sent to all ESPs`,'log-ok');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════════════
+initMQTT();
+</script>
+
+</body>
+</html>
